@@ -1,17 +1,19 @@
-use ggez::{event, graphics, Context, GameResult};
-use ggez::error::GameError;
-use ggez::input::keyboard::{KeyInput, KeyCode, KeyMods};
+use ggez::{
+    error::{GameError, GameResult},
+    event,
+    glam::*,
+    graphics::{self, Color},
+    input::keyboard::{KeyCode, KeyInput, KeyMods},
+    Context,
+};
 
-use std::{env, path, num};
 use std::time::{Duration, Instant};
+use std::{env, num, path};
 
-
-
-const VX_MAX: f32 = 3.0;
+const VX_MAX: f32 = 150.0;
 const ACCX: f32 = 8.0 * VX_MAX;
 
-const GRAV: f32 = 50.0;
-// const ACCY: f32 = 0.3 * GRAV;
+const GRAV: f32 = 1000.0;
 const JUMPACC: f32 = 0.4 * GRAV;
 
 pub trait Updatable {
@@ -70,14 +72,13 @@ impl Control {
 
 #[derive(Debug)]
 struct Player {
-    
     input: Control,
     pos: Point,
     width: f32,
     height: f32,
     velocity_x: f32,
     velocity_y: f32,
-    
+
     is_grounded: bool,
     is_grappling: bool,
 }
@@ -86,10 +87,7 @@ impl Player {
     fn new() -> Player {
         Player {
             input: Control::new(),
-            pos: Point{
-                x: 0.0,
-                y: 0.0,
-            },
+            pos: Point { x: 0.0, y: 0.0 },
             width: 50.0,
             height: 50.0,
             velocity_x: 0.0,
@@ -105,37 +103,39 @@ impl Player {
     }
 
     fn y_is_valid(y_coord: f32) -> bool {
-        y_coord > 0.0
+        y_coord >= 0.0
     }
 }
 
 impl Updatable for Player {
     fn update_entity(&mut self, dt: f32) {
         self.update_is_grounded();
-        
+
         let mut dvx = 0.0;
         let mut dvy = 0.0;
-        
+
         if self.input.right {
             dvx += ACCX;
         } else if self.input.left {
             dvx -= ACCX;
         } else {
-            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32 ; // sign is possitive if velocity_x is negative and vice versa
-            dvx = ACCX * sign * -1.0;                                                             // This block attracts the player's velocity_x to 0 if idle
+            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32; // sign is possitive if velocity_x is negative and vice versa
+            dvx = ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
         }
 
         if !self.is_grounded {
             dvy -= GRAV;
-        } else if self.is_grounded && self.input.up {
+        } else if self.input.up {
             dvy += JUMPACC / dt;
         }
 
         self.velocity_x += dvx * dt;
         self.velocity_y += dvy * dt;
 
-//        if self.velocity_x > VX_MAX || self.velocity_x < -1.0 * VX_MAX as f32 {
-//            self.velocity_x -= dvx * dt;
+        //        if self.velocity_x > VX_MAX || self.velocity_x < -1.0 * VX_MAX as f32 {
+        //            self.velocity_x -= dvx * dt;
+
+        //        replace below clamp with drag
 
         if self.velocity_x > VX_MAX {
             self.velocity_x = VX_MAX;
@@ -147,10 +147,10 @@ impl Updatable for Player {
 
         let new_pos_x = self.pos.x + self.velocity_x * dt;
         let new_pos_y = self.pos.y + self.velocity_y * dt;
-        
+
         self.pos.x = new_pos_x; // Add collision checks
         if Player::y_is_valid(new_pos_y) {
-            if new_pos_y < self.velocity_y * dt * 1.1 && self.velocity_y < 0.0 {
+            if new_pos_y < self.velocity_y * dt && self.velocity_y < 0.0 {
                 self.pos.y = 0.0;
             } else {
                 self.pos.y = new_pos_y;
@@ -166,6 +166,8 @@ struct Platform {
     pos: Point,
     width: f32,
     height: f32,
+
+    lethal: bool,
 }
 
 struct Level {
@@ -186,6 +188,7 @@ impl Level {
             pos: Point::new(500.0, 20.0),
             width: 1000.0,
             height: 40.0,
+            lethal: false,
         };
         let l = Level {
             player: mc,
@@ -201,18 +204,39 @@ impl event::EventHandler for Level {
         let now = Instant::now();
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
-        
+
         self.player.update_entity(dt);
 
         Ok(())
     }
 
-    fn draw(& mut self, ctx: &mut Context) -> GameResult {
-        println!("{:#?}", self.player); 
+    fn draw(&mut self, ctx: &mut Context) -> GameResult {
+        println!("{:#?}", self.player);
+
+        let mut canvas =
+            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
+
+        let circle = graphics::Mesh::new_circle(
+            ctx,
+            graphics::DrawMode::fill(),
+            vec2(0., 0.),
+            20.0,
+            0.1,
+            Color::WHITE,
+        )?;
+        canvas.draw(&circle, Vec2::new(self.player.pos.x, self.player.pos.y));
+
+        canvas.finish(ctx)?;
+
         Ok(())
     }
 
-    fn key_down_event(&mut self, ctx: &mut Context, input: KeyInput, _repeated: bool) -> GameResult {
+    fn key_down_event(
+        &mut self,
+        ctx: &mut Context,
+        input: KeyInput,
+        _repeated: bool,
+    ) -> GameResult {
         match input.keycode {
             Some(KeyCode::Up) => self.player.input.up = true,
             Some(KeyCode::Down) => self.player.input.down = true,
