@@ -10,31 +10,38 @@ use ggez::{
 use std::time::{Duration, Instant};
 use std::{env, num, path};
 
-const VX_MAX: f32 = 150.0;
-const ACCX: f32 = 8.0 * VX_MAX;
+const VX_MAX: f32 = 300.0;
+const ACCX: f32 = 15.0 * VX_MAX;
 
-const GRAV: f32 = 1000.0;
-const JUMPACC: f32 = 0.4 * GRAV;
+const GRAV: f32 = 2500.0;
+const JUMPACC: f32 = 0.3125 * GRAV;
 
 pub trait Updatable {
-    fn update_entity(&mut self, dt: f32) {}
-    // fn is_colliding();
-}
-/*
-pub trait Resource<T> {
-    fn load(ctx: &mut Context, path: &str) -> Result<T, GameError>;
+    fn next_state(&self, dt: f32, state: &Level) -> Self;
 }
 
-impl Resource<graphics::Image> for graphics::Image {
-    fn load(ctx: &mut Context, path: &str) -> Result<Self, GameError> {
-        graphics::Image::new(ctx, path)
+#[derive(Debug)]
+struct Rect {
+    top_left: Point,
+    width: f32,
+    height: f32,
+}
+
+impl Rect {
+    fn is_colliding(&self, other: &Rect) -> bool {
+        self.x_overlaps(other) && self.y_overlaps(other)
+    }
+
+    fn x_overlaps(&self, other: &Rect) -> bool {
+        self.top_left.x < other.top_left.x + other.width
+            && self.top_left.x + self.width > other.top_left.x
+    }
+
+    fn y_overlaps(&self, other: &Rect) -> bool {
+        self.top_left.y > other.top_left.y - other.height
+            && self.top_left.y - self.height < other.top_left.y
     }
 }
-
-struct ResourceManager {
-    assets: HashMap<String, Box<dyn Resource>>,
-}
-*/
 
 #[derive(Debug)]
 struct Point {
@@ -73,9 +80,7 @@ impl Control {
 #[derive(Debug)]
 struct Player {
     input: Control,
-    pos: Point,
-    width: f32,
-    height: f32,
+    bounding_box: Rect,
     velocity_x: f32,
     velocity_y: f32,
 
@@ -84,12 +89,14 @@ struct Player {
 }
 
 impl Player {
-    fn new() -> Player {
+    fn new(size: f32, x: f32, y: f32) -> Player {
         Player {
             input: Control::new(),
-            pos: Point { x: 0.0, y: 0.0 },
-            width: 50.0,
-            height: 50.0,
+            bounding_box: Rect {
+                top_left: Point::new(x, y),
+                width: size,
+                height: size,
+            },
             velocity_x: 0.0,
             velocity_y: 0.0,
 
@@ -98,21 +105,52 @@ impl Player {
         }
     }
 
-    fn update_is_grounded(&mut self) {
-        self.is_grounded = self.pos.y <= 0.0;
-    }
+    // precondition: self's bounding_box must be valid.
+    fn evaluate_collisions(&self, guess_box: &Rect, state: &Level) -> Rect {
+        let mut nudged_box = Rect {
+            top_left: Point {
+                ..guess_box.top_left
+            },
+            ..*guess_box
+        };
 
-    fn y_is_valid(y_coord: f32) -> bool {
-        y_coord >= 0.0
+        for platform in &state.platforms {
+            if guess_box.is_colliding(&platform.bounding_box) {
+                if self.bounding_box.y_overlaps(&platform.bounding_box) {
+                    // Old y overlapped, x must be changed
+                    if self.bounding_box.top_left.x < platform.bounding_box.top_left.x {
+                        // If old x was left, snap nuged box left
+                        nudged_box.top_left.x = platform.bounding_box.top_left.x - nudged_box.width;
+                    } else {
+                        // Right case
+                        nudged_box.top_left.x =
+                            platform.bounding_box.top_left.x + platform.bounding_box.height;
+                    }
+                } else if self.bounding_box.x_overlaps(&platform.bounding_box) {
+                    // If old x overlapped, y must be changed
+                    if self.bounding_box.top_left.y > platform.bounding_box.top_left.y {
+                        // If old y was above, snap the nudged box to above
+                        nudged_box.top_left.y =
+                            platform.bounding_box.top_left.y + nudged_box.height;
+                    } else {
+                        // Below case
+                        nudged_box.top_left.y =
+                            platform.bounding_box.top_left.y - platform.bounding_box.height;
+                    }
+                }
+            }
+        }
+
+        nudged_box
     }
 }
 
 impl Updatable for Player {
-    fn update_entity(&mut self, dt: f32) {
-        self.update_is_grounded();
-
+    fn next_state(&self, dt: f32, state: &Level) -> Player {
         let mut dvx = 0.0;
-        let mut dvy = 0.0;
+        let mut dvy = GRAV * -1.0;
+
+        let mut new_is_grounded = self.is_grounded;
 
         if self.input.right {
             dvx += ACCX;
@@ -123,49 +161,61 @@ impl Updatable for Player {
             dvx = ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
         }
 
-        if !self.is_grounded {
-            dvy -= GRAV;
-        } else if self.input.up {
+        if self.is_grounded && self.input.up {
             dvy += JUMPACC / dt;
+            new_is_grounded = false;
         }
 
-        self.velocity_x += dvx * dt;
-        self.velocity_y += dvy * dt;
+        let mut new_velocity_x = self.velocity_x + dvx * dt;
+        let mut new_velocity_y = self.velocity_y + dvy * dt;
 
-        //        if self.velocity_x > VX_MAX || self.velocity_x < -1.0 * VX_MAX as f32 {
-        //            self.velocity_x -= dvx * dt;
-
-        //        replace below clamp with drag
-
-        if self.velocity_x > VX_MAX {
-            self.velocity_x = VX_MAX;
-        } else if self.velocity_x < -1.0 * VX_MAX {
-            self.velocity_x = -1.0 * VX_MAX
-        } else if self.velocity_x.abs() < ACCX * dt {
-            self.velocity_x = 0.0;
+        if new_velocity_x > VX_MAX {
+            new_velocity_x = VX_MAX;
+        } else if new_velocity_x < -1.0 * VX_MAX {
+            new_velocity_x = -1.0 * VX_MAX
+        } else if new_velocity_x.abs() < ACCX * dt {
+            new_velocity_x = 0.0;
         }
 
-        let new_pos_x = self.pos.x + self.velocity_x * dt;
-        let new_pos_y = self.pos.y + self.velocity_y * dt;
+        let new_pos_x = self.bounding_box.top_left.x + new_velocity_x * dt;
+        let new_pos_y = self.bounding_box.top_left.y + new_velocity_y * dt;
+        let mut new_box = Rect {
+            top_left: Point::new(new_pos_x, new_pos_y),
+            width: self.bounding_box.width,
+            height: self.bounding_box.height,
+        };
 
-        self.pos.x = new_pos_x; // Add collision checks
-        if Player::y_is_valid(new_pos_y) {
-            if new_pos_y < self.velocity_y * dt && self.velocity_y < 0.0 {
-                self.pos.y = 0.0;
-            } else {
-                self.pos.y = new_pos_y;
+        new_box = self.evaluate_collisions(&new_box, state);
+
+        if new_box.top_left.y != new_pos_y {
+            new_velocity_y = 0.0;
+            if new_velocity_y <= 0.0 {
+                new_is_grounded = true;
             }
-        } else {
-            self.velocity_y = 0.0;
-            self.pos.y = 0.0;
+        }
+        if new_box.top_left.x != new_pos_x {
+            new_velocity_x = 0.0;
+        }
+
+        Player {
+            input: Control {
+                up: self.input.up,
+                down: self.input.down,
+                left: self.input.left,
+                right: self.input.right,
+            },
+            bounding_box: new_box,
+            velocity_x: new_velocity_x,
+            velocity_y: new_velocity_y,
+
+            is_grounded: new_is_grounded,
+            is_grappling: false,
         }
     }
 }
 
 struct Platform {
-    pos: Point,
-    width: f32,
-    height: f32,
+    bounding_box: Rect,
 
     lethal: bool,
 }
@@ -183,16 +233,26 @@ impl Level {
             "LiberationMono",
             graphics::FontData::from_path(ctx, "/LiberationMono-Regular.ttf")?,
         );
-        let mc = Player::new();
-        let platform = Platform {
-            pos: Point::new(500.0, 20.0),
-            width: 1000.0,
-            height: 40.0,
+        let mc = Player::new(40.0, 200.0, 200.0);
+        let platform1 = Platform {
+            bounding_box: Rect {
+                top_left: Point::new(100.0, 100.0),
+                width: 300.0,
+                height: 40.0,
+            },
+            lethal: false,
+        };
+        let platform2 = Platform {
+            bounding_box: Rect {
+                top_left: Point::new(200.0, 200.0),
+                width: 300.0,
+                height: 40.0,
+            },
             lethal: false,
         };
         let l = Level {
             player: mc,
-            platforms: vec![platform],
+            platforms: vec![platform1, platform2],
             last_update: Instant::now(),
         };
         Ok(l)
@@ -205,7 +265,7 @@ impl event::EventHandler for Level {
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
 
-        self.player.update_entity(dt);
+        self.player = self.player.next_state(dt, &self);
 
         Ok(())
     }
@@ -214,17 +274,48 @@ impl event::EventHandler for Level {
         println!("{:#?}", self.player);
 
         let mut canvas =
-            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.1, 0.2, 0.3, 1.0]));
-
-        let circle = graphics::Mesh::new_circle(
+            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.2, 0.3, 0.4, 1.0]));
+        
+        let mc = graphics::Mesh::new_rectangle(
             ctx,
             graphics::DrawMode::fill(),
-            vec2(0., 0.),
-            20.0,
-            0.1,
-            Color::WHITE,
+            graphics::Rect::new(
+            0.0,
+            0.0,
+            self.player.bounding_box.width,
+            self.player.bounding_box.height,
+            ),
+            Color::BLUE,
         )?;
-        canvas.draw(&circle, Vec2::new(self.player.pos.x, self.player.pos.y));
+
+        canvas.draw(
+            &mc,
+            Vec2::new(
+                self.player.bounding_box.top_left.x,
+                600.0 - self.player.bounding_box.top_left.y,
+            ),
+        ); 
+
+        for platform in &self.platforms {
+            let plat = graphics::Mesh::new_rectangle(
+                ctx,
+                graphics::DrawMode::fill(),
+                graphics::Rect::new(
+                    0.0,
+                    0.0,
+                    platform.bounding_box.width,
+                    platform.bounding_box.height,
+                ),
+                Color::YELLOW,
+            )?;
+            canvas.draw(
+                &plat,
+                Vec2::new(
+                    platform.bounding_box.top_left.x,
+                    600.0 - platform.bounding_box.top_left.y,
+                ),
+            )
+        }
 
         canvas.finish(ctx)?;
 
