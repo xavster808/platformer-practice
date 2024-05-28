@@ -124,7 +124,7 @@ impl Player {
                     } else {
                         // Right case
                         nudged_box.top_left.x =
-                            platform.bounding_box.top_left.x + platform.bounding_box.height;
+                            platform.bounding_box.top_left.x + platform.bounding_box.width;
                     }
                 } else if self.bounding_box.x_overlaps(&platform.bounding_box) {
                     // If old x overlapped, y must be changed
@@ -148,7 +148,7 @@ impl Player {
 impl Updatable for Player {
     fn next_state(&self, dt: f32, state: &Level) -> Player {
         let mut dvx = 0.0;
-        let mut dvy = GRAV * -1.0;
+        let mut dvy = 0.0 - GRAV;
 
         let mut new_is_grounded = self.is_grounded;
 
@@ -188,10 +188,10 @@ impl Updatable for Player {
         new_box = self.evaluate_collisions(&new_box, state);
 
         if new_box.top_left.y != new_pos_y {
-            new_velocity_y = 0.0;
             if new_velocity_y <= 0.0 {
                 new_is_grounded = true;
             }
+            new_velocity_y = 0.0;
         }
         if new_box.top_left.x != new_pos_x {
             new_velocity_x = 0.0;
@@ -233,7 +233,7 @@ impl Level {
             "LiberationMono",
             graphics::FontData::from_path(ctx, "/LiberationMono-Regular.ttf")?,
         );
-        let mc = Player::new(40.0, 200.0, 200.0);
+        let mc = Player::new(40.0, 200.0, 300.0);
         let platform1 = Platform {
             bounding_box: Rect {
                 top_left: Point::new(100.0, 100.0),
@@ -250,9 +250,17 @@ impl Level {
             },
             lethal: false,
         };
+        let platform3 = Platform {
+            bounding_box: Rect {
+                top_left: Point::new(420.0, 110.0),
+                width: 300.0,
+                height: 40.0,
+            },
+            lethal: false,
+        };
         let l = Level {
             player: mc,
-            platforms: vec![platform1, platform2],
+            platforms: vec![platform1, platform2, platform3],
             last_update: Instant::now(),
         };
         Ok(l)
@@ -275,15 +283,15 @@ impl event::EventHandler for Level {
 
         let mut canvas =
             graphics::Canvas::from_frame(ctx, graphics::Color::from([0.2, 0.3, 0.4, 1.0]));
-        
+
         let mc = graphics::Mesh::new_rectangle(
             ctx,
             graphics::DrawMode::fill(),
             graphics::Rect::new(
-            0.0,
-            0.0,
-            self.player.bounding_box.width,
-            self.player.bounding_box.height,
+                0.0,
+                0.0,
+                self.player.bounding_box.width,
+                self.player.bounding_box.height,
             ),
             Color::BLUE,
         )?;
@@ -294,7 +302,7 @@ impl event::EventHandler for Level {
                 self.player.bounding_box.top_left.x,
                 600.0 - self.player.bounding_box.top_left.y,
             ),
-        ); 
+        );
 
         for platform in &self.platforms {
             let plat = graphics::Mesh::new_rectangle(
