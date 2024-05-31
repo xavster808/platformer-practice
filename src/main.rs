@@ -3,12 +3,14 @@ use ggez::{
     event,
     glam::*,
     graphics::{self, Color},
-    input::keyboard::{KeyCode, KeyInput, KeyMods},
+    input::keyboard::{KeyCode, KeyInput},
     Context,
 };
 
 use std::time::{Duration, Instant};
-use std::{env, num, path};
+use std::{env, fs, num, path};
+
+const PLAYER_DIMENSION: f32 = 40.0;
 
 const VX_MAX: f32 = 300.0;
 const ACCX: f32 = 15.0 * VX_MAX;
@@ -43,7 +45,7 @@ impl Rect {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Point {
     x: f32,
     y: f32,
@@ -84,6 +86,10 @@ struct Player {
     velocity_x: f32,
     velocity_y: f32,
 
+    spawnpoint: Point,
+    deaths: u32,
+
+    coyote_time: f32,
     is_grounded: bool,
     is_grappling: bool,
 }
@@ -100,22 +106,27 @@ impl Player {
             velocity_x: 0.0,
             velocity_y: 0.0,
 
+            spawnpoint: Point::new(x, y),
+            deaths: 0,
+
+            coyote_time: 0.0,
             is_grounded: true,
             is_grappling: false,
         }
     }
 
     // precondition: self's bounding_box must be valid.
-    fn evaluate_collisions(&self, guess_box: &Rect, state: &Level) -> Rect {
+    fn evaluate_collisions(&self, guess_box: &Rect, state: &Level) -> (Rect, u32) {
         let mut nudged_box = Rect {
             top_left: Point {
                 ..guess_box.top_left
             },
             ..*guess_box
         };
+        let mut new_deaths = self.deaths;
 
         for platform in &state.platforms {
-            if guess_box.is_colliding(&platform.bounding_box) {
+            if nudged_box.is_colliding(&platform.bounding_box) && !platform.lethal {
                 if self.bounding_box.y_overlaps(&platform.bounding_box) {
                     // Old y overlapped, x must be changed
                     if self.bounding_box.top_left.x < platform.bounding_box.top_left.x {
@@ -140,34 +151,64 @@ impl Player {
                 }
             }
         }
+        for platform in &state.platforms {
+            if platform.lethal && nudged_box.is_colliding(&platform.bounding_box) {
+                nudged_box.top_left = self.spawnpoint;
+                new_deaths += 1;
+                println!("Deaths: {}", new_deaths);
+                break;
+            }
+        }
+        (nudged_box, new_deaths)
+    }
 
-        nudged_box
+    fn evaluate_checkpoints(&self, new_box: &Rect, state: &Level) -> Point {
+        let mut new_spawnpoint = self.spawnpoint;
+        for checkpoint in &state.checkpoints {
+            if new_box.is_colliding(&checkpoint.bounding_box) {
+                new_spawnpoint = checkpoint.bounding_box.top_left;
+                break;
+            }
+        }
+        new_spawnpoint
     }
 }
 
 impl Updatable for Player {
     fn next_state(&self, dt: f32, state: &Level) -> Player {
         let mut dvx = 0.0;
-        let mut dvy = 0.0 - GRAV;
+        let mut dvy = 0.0;
+        let mut new_coyote_time = self.coyote_time;
+        if !self.is_grounded {
+            dvy -= GRAV;
+            new_coyote_time += dt;
+        } else {
+            new_coyote_time = 0.0;
+        }
+        let mut new_is_grounded = false;
 
-        let mut new_is_grounded = self.is_grounded;
+        let mut new_spawnpoint = self.spawnpoint;
+        let mut new_deaths = self.deaths;
 
         if self.input.right {
             dvx += ACCX;
         } else if self.input.left {
             dvx -= ACCX;
         } else {
-            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32; // sign is possitive if velocity_x is negative and vice versa
-            dvx = ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
-        }
-
-        if self.is_grounded && self.input.up {
-            dvy += JUMPACC / dt;
-            new_is_grounded = false;
+            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32; // sign is positive if velocity_x is negative and vice versa
+            dvx += ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
         }
 
         let mut new_velocity_x = self.velocity_x + dvx * dt;
         let mut new_velocity_y = self.velocity_y + dvy * dt;
+
+        if self.input.up && new_coyote_time < 0.08
+        /*|| self.is_grounded*/
+        {
+            new_is_grounded = false;
+            new_coyote_time = 10.0; // Out of range; Effectively a jump counter.
+            new_velocity_y = JUMPACC;
+        }
 
         if new_velocity_x > VX_MAX {
             new_velocity_x = VX_MAX;
@@ -175,6 +216,9 @@ impl Updatable for Player {
             new_velocity_x = -1.0 * VX_MAX
         } else if new_velocity_x.abs() < ACCX * dt {
             new_velocity_x = 0.0;
+        }
+        if new_velocity_y < -1.0 * JUMPACC {
+            new_velocity_y = 0.0 - JUMPACC
         }
 
         let new_pos_x = self.bounding_box.top_left.x + new_velocity_x * dt;
@@ -185,12 +229,25 @@ impl Updatable for Player {
             height: self.bounding_box.height,
         };
 
-        new_box = self.evaluate_collisions(&new_box, state);
+        (new_box, new_deaths) = self.evaluate_collisions(&new_box, state);
+        new_spawnpoint = self.evaluate_checkpoints(&new_box, state);
 
-        if new_box.top_left.y != new_pos_y {
-            if new_velocity_y <= 0.0 {
+        let ground_test = Rect {
+            top_left: Point::new(
+                new_box.top_left.x,
+                new_box.top_left.y - self.bounding_box.height,
+            ),
+            width: self.bounding_box.width, //Decreases leniency; 1.0 is too fat
+            height: 1.0,
+        };
+        for platform in &state.platforms {
+            if ground_test.is_colliding(&platform.bounding_box) && !platform.lethal {
                 new_is_grounded = true;
+                break;
             }
+        }
+
+        if new_is_grounded || (new_pos_y != new_box.top_left.y) {
             new_velocity_y = 0.0;
         }
         if new_box.top_left.x != new_pos_x {
@@ -208,6 +265,10 @@ impl Updatable for Player {
             velocity_x: new_velocity_x,
             velocity_y: new_velocity_y,
 
+            spawnpoint: new_spawnpoint,
+            deaths: new_deaths,
+
+            coyote_time: new_coyote_time,
             is_grounded: new_is_grounded,
             is_grappling: false,
         }
@@ -220,9 +281,97 @@ struct Platform {
     lethal: bool,
 }
 
+impl Platform {
+    fn read_platforms(path: &str) -> Vec<Platform> {
+        let level = fs::read_to_string(path).expect("Expected readable file");
+        let level = level.as_bytes();
+        let mut retval: Vec<Platform> = Vec::new();
+
+        let plat_symbols = vec![0x3D, 0x78]; // =, x
+        let unit = PLAYER_DIMENSION / 2.0;
+
+        let mut left_offset = 0;
+        let mut down_offset = 1;
+        let mut length = 1;
+        let mut previous_char = &0x00;
+
+        for c in level {
+            if c == previous_char {
+                length += 1;
+            } else {
+                if plat_symbols.contains(previous_char) {
+                    retval.push(Platform {
+                        bounding_box: Rect {
+                            top_left: Point::new(
+                                unit * (left_offset - length) as f32,
+                                unit * down_offset as f32,
+                            ),
+                            width: unit * length as f32,
+                            height: unit,
+                        },
+                        lethal: if previous_char == &0x3D { false } else { true },
+                    });
+                }
+
+                length = 1;
+
+                if c == &0x0a {
+                    // "\n"
+                    left_offset = -1;
+                    down_offset += 1;
+                }
+            }
+            left_offset += 1;
+            previous_char = c;
+        }
+        retval
+    }
+}
+
+struct Checkpoint {
+    bounding_box: Rect,
+}
+
+impl Checkpoint {
+    fn read_checkpoints(path: &str) -> Vec<Checkpoint> {
+        let level = fs::read_to_string(path).expect("Expected readable file");
+        let level = level.as_bytes();
+        let mut retval: Vec<Checkpoint> = Vec::new();
+
+        let plat_symbols = vec![0x63]; // c
+        let unit = PLAYER_DIMENSION / 2.0;
+
+        let mut left_offset = 0;
+        let mut down_offset = 1;
+
+        for c in level {
+            if plat_symbols.contains(c) {
+                retval.push(Checkpoint {
+                    bounding_box: Rect {
+                        top_left: Point::new(
+                            unit * (left_offset) as f32,
+                            unit * down_offset as f32,
+                        ),
+                        width: unit as f32,
+                        height: unit as f32,
+                    },
+                });
+            }
+            if c == &0x0a {
+                // "\n"
+                left_offset = -1;
+                down_offset += 1;
+            }
+            left_offset += 1;
+        }
+        retval
+    }
+}
+
 struct Level {
     player: Player,
     platforms: Vec<Platform>,
+    checkpoints: Vec<Checkpoint>,
 
     last_update: Instant,
 }
@@ -233,34 +382,13 @@ impl Level {
             "LiberationMono",
             graphics::FontData::from_path(ctx, "/LiberationMono-Regular.ttf")?,
         );
-        let mc = Player::new(40.0, 200.0, 300.0);
-        let platform1 = Platform {
-            bounding_box: Rect {
-                top_left: Point::new(100.0, 100.0),
-                width: 300.0,
-                height: 40.0,
-            },
-            lethal: false,
-        };
-        let platform2 = Platform {
-            bounding_box: Rect {
-                top_left: Point::new(200.0, 200.0),
-                width: 300.0,
-                height: 40.0,
-            },
-            lethal: false,
-        };
-        let platform3 = Platform {
-            bounding_box: Rect {
-                top_left: Point::new(420.0, 110.0),
-                width: 300.0,
-                height: 40.0,
-            },
-            lethal: false,
-        };
+        let mc = Player::new(PLAYER_DIMENSION, 100.0, 300.0);
+
+        let file = "level2.txt";
         let l = Level {
             player: mc,
-            platforms: vec![platform1, platform2, platform3],
+            platforms: Platform::read_platforms(file),
+            checkpoints: Checkpoint::read_checkpoints(file),
             last_update: Instant::now(),
         };
         Ok(l)
@@ -279,17 +407,28 @@ impl event::EventHandler for Level {
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        println!("{:#?}", self.player);
+        //println!("{:#?}", self.player);
 
         let mut canvas =
-            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.2, 0.3, 0.4, 1.0]));
+            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.4, 0.3, 0.3, 1.0]));
+
+        let x_offset = if self.player.bounding_box.top_left.x >= 0.0 {
+            (self.player.bounding_box.top_left.x as i32 / 800) as f32 * 800.0
+        } else {
+            ((self.player.bounding_box.top_left.x as i32 + 1) / 800 - 1) as f32 * 800.0
+        };
+        let y_offset = if self.player.bounding_box.top_left.y >= 0.0 {
+            (self.player.bounding_box.top_left.y as i32 / 600) as f32 * 600.0
+        } else {
+            ((self.player.bounding_box.top_left.y as i32 + 1) / 600 - 1) as f32 * 600.0
+        };
 
         let mc = graphics::Mesh::new_rectangle(
             ctx,
             graphics::DrawMode::fill(),
             graphics::Rect::new(
-                0.0,
-                0.0,
+                0.0 - x_offset,
+                0.0 + y_offset,
                 self.player.bounding_box.width,
                 self.player.bounding_box.height,
             ),
@@ -309,18 +448,43 @@ impl event::EventHandler for Level {
                 ctx,
                 graphics::DrawMode::fill(),
                 graphics::Rect::new(
-                    0.0,
-                    0.0,
+                    0.0 - x_offset,
+                    0.0 + y_offset,
                     platform.bounding_box.width,
                     platform.bounding_box.height,
                 ),
-                Color::YELLOW,
+                if platform.lethal {
+                    Color::RED
+                } else {
+                    Color::new(0.2, 0.2, 0.2, 1.0)
+                },
             )?;
             canvas.draw(
                 &plat,
                 Vec2::new(
                     platform.bounding_box.top_left.x,
                     600.0 - platform.bounding_box.top_left.y,
+                ),
+            )
+        }
+
+        for checkpoint in &self.checkpoints {
+            let checky = graphics::Mesh::new_rectangle(
+                ctx,
+                graphics::DrawMode::fill(),
+                graphics::Rect::new(
+                    0.0 - x_offset,
+                    0.0 + y_offset,
+                    checkpoint.bounding_box.width,
+                    checkpoint.bounding_box.height,
+                ),
+                Color::new(0.5, 0.8, 0.5, 0.4),
+            )?;
+            canvas.draw(
+                &checky,
+                Vec2::new(
+                    checkpoint.bounding_box.top_left.x,
+                    600.0 - checkpoint.bounding_box.top_left.y,
                 ),
             )
         }
