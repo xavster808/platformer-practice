@@ -22,7 +22,22 @@ pub trait Updatable {
     fn next_state(&self, dt: f32, state: &Level) -> Self;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+struct Point {
+    x: f32,
+    y: f32,
+}
+
+impl Point {
+    fn new(x_coord: f32, y_coord: f32) -> Point {
+        Point {
+            x: x_coord,
+            y: y_coord,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 struct Rect {
     top_left: Point,
     width: f32,
@@ -45,27 +60,13 @@ impl Rect {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Point {
-    x: f32,
-    y: f32,
-}
-
-impl Point {
-    fn new(x_coord: f32, y_coord: f32) -> Point {
-        Point {
-            x: x_coord,
-            y: y_coord,
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Control {
     up: bool,
     down: bool,
     left: bool,
     right: bool,
+    x: bool,
 }
 
 impl Control {
@@ -75,6 +76,23 @@ impl Control {
             down: false,
             left: false,
             right: false,
+            x: false,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+struct Grapple_Hook {
+    bounding_box: Rect,
+    velocity_x: f32,
+    velocity_y: f32,
+}
+
+impl Grapple_Hook {
+    fn new(b: Rect) -> Grapple_Hook {
+        Grapple_Hook {
+            bounding_box: b,
+            velocity_x: 0.0,
+            velocity_y: 0.0,
         }
     }
 }
@@ -86,10 +104,12 @@ struct Player {
     velocity_x: f32,
     velocity_y: f32,
 
+    hook: Grapple_Hook,
+
     spawnpoint: Point,
     deaths: u32,
 
-    coyote_time: f32,
+    coyote_time: f32, //in seconds
     is_grounded: bool,
     is_grappling: bool,
 }
@@ -105,6 +125,12 @@ impl Player {
             },
             velocity_x: 0.0,
             velocity_y: 0.0,
+
+            hook: Grapple_Hook::new(Rect {
+                top_left: Point::new(x + size / 4.0, y - size / 4.0),
+                width: size / 2.0,
+                height: size / 2.0,
+            }),
 
             spawnpoint: Point::new(x, y),
             deaths: 0,
@@ -186,39 +212,50 @@ impl Updatable for Player {
             new_coyote_time = 0.0;
         }
         let mut new_is_grounded = false;
+        let mut new_is_grappling = self.is_grappling;
+
+        let mut new_hook = self.hook;
 
         let mut new_spawnpoint = self.spawnpoint;
         let mut new_deaths = self.deaths;
 
-        if self.input.right {
+        let mut new_velocity_x = self.velocity_x;
+        let mut new_velocity_y = self.velocity_y - GRAV * dt;
+
+        if self.input.right && self.velocity_x <= VX_MAX {
             dvx += ACCX;
-        } else if self.input.left {
+            if new_velocity_x + dvx * dt > VX_MAX {
+                dvx = 0.0;
+            }
+        } else if self.input.left && self.velocity_x >= 0.0 - VX_MAX {
             dvx -= ACCX;
-        } else {
-            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32; // sign is positive if velocity_x is negative and vice versa
+            if new_velocity_x + dvx * dt < 0.0 - VX_MAX {
+                dvx = 0.0;
+            }
+        } else if self.input.right == self.input.left {
+            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32; // sign is positive if velocity_x is positive and vice versa
             dvx += ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
         }
 
-        let mut new_velocity_x = self.velocity_x + dvx * dt;
-        let mut new_velocity_y = self.velocity_y + dvy * dt;
+        new_velocity_x += dvx * dt;
 
-        if self.input.up && new_coyote_time < 0.08
-        /*|| self.is_grounded*/
-        {
+        if self.input.up && new_coyote_time < 0.1 {
             new_is_grounded = false;
-            new_coyote_time = 10.0; // Out of range; Effectively a jump counter.
+            new_coyote_time += 10.0; // Out of range; Effectively a jump counter.
             new_velocity_y = JUMPACC;
         }
 
-        if new_velocity_x > VX_MAX {
-            new_velocity_x = VX_MAX;
-        } else if new_velocity_x < -1.0 * VX_MAX {
-            new_velocity_x = -1.0 * VX_MAX
-        } else if new_velocity_x.abs() < ACCX * dt {
+        if new_velocity_x.abs() < ACCX * dt {
             new_velocity_x = 0.0;
+        } else if new_velocity_x.abs() - VX_MAX < ACCX * dt
+            && (self.input.left && new_velocity_x < 0.0 || self.input.right && new_velocity_x > 0.0)
+        {
+            new_velocity_x =
+                VX_MAX * ((new_velocity_x > 0.0) as i32 - (new_velocity_x < 0.0) as i32) as f32;
         }
+
         if new_velocity_y < -1.0 * JUMPACC {
-            new_velocity_y = 0.0 - JUMPACC
+            new_velocity_y = -1.0 * JUMPACC;
         }
 
         let new_pos_x = self.bounding_box.top_left.x + new_velocity_x * dt;
@@ -260,17 +297,20 @@ impl Updatable for Player {
                 down: self.input.down,
                 left: self.input.left,
                 right: self.input.right,
+                x: self.input.x,
             },
             bounding_box: new_box,
             velocity_x: new_velocity_x,
             velocity_y: new_velocity_y,
+
+            hook: new_hook,
 
             spawnpoint: new_spawnpoint,
             deaths: new_deaths,
 
             coyote_time: new_coyote_time,
             is_grounded: new_is_grounded,
-            is_grappling: false,
+            is_grappling: new_is_grappling,
         }
     }
 }
@@ -382,9 +422,9 @@ impl Level {
             "LiberationMono",
             graphics::FontData::from_path(ctx, "/LiberationMono-Regular.ttf")?,
         );
-        let mc = Player::new(PLAYER_DIMENSION, 100.0, 300.0);
+        let mc = Player::new(PLAYER_DIMENSION, 100.0, 100.0);
 
-        let file = "level2.txt";
+        let file = "test.txt";
         let l = Level {
             player: mc,
             platforms: Platform::read_platforms(file),
@@ -407,7 +447,7 @@ impl event::EventHandler for Level {
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        //println!("{:#?}", self.player);
+        println!("{:#?}", self.player);
 
         let mut canvas =
             graphics::Canvas::from_frame(ctx, graphics::Color::from([0.4, 0.3, 0.3, 1.0]));
@@ -435,11 +475,31 @@ impl event::EventHandler for Level {
             Color::BLUE,
         )?;
 
+        let hook = graphics::Mesh::new_rectangle(
+            ctx,
+            graphics::DrawMode::fill(),
+            graphics::Rect::new(
+                0.0 - x_offset,
+                0.0 + y_offset,
+                self.player.hook.bounding_box.width,
+                self.player.hook.bounding_box.height,
+            ),
+            Color::new(0.0, 0.0, 0.0, 0.7),
+        )?;
+
         canvas.draw(
             &mc,
             Vec2::new(
                 self.player.bounding_box.top_left.x,
                 600.0 - self.player.bounding_box.top_left.y,
+            ),
+        );
+
+        canvas.draw(
+            &hook,
+            Vec2::new(
+                self.player.hook.bounding_box.top_left.x,
+                600.0 - self.player.hook.bounding_box.top_left.y,
             ),
         );
 
@@ -505,6 +565,7 @@ impl event::EventHandler for Level {
             Some(KeyCode::Down) => self.player.input.down = true,
             Some(KeyCode::Left) => self.player.input.left = true,
             Some(KeyCode::Right) => self.player.input.right = true,
+            Some(KeyCode::X) => self.player.input.x = true,
             _ => {} // Ignore other key presses
         }
         Ok(())
@@ -516,6 +577,7 @@ impl event::EventHandler for Level {
             Some(KeyCode::Down) => self.player.input.down = false,
             Some(KeyCode::Left) => self.player.input.left = false,
             Some(KeyCode::Right) => self.player.input.right = false,
+            Some(KeyCode::X) => self.player.input.x = false,
             _ => {} // Ignore other key presses
         }
         Ok(())
