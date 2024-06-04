@@ -18,6 +18,13 @@ const ACCX: f32 = 15.0 * VX_MAX;
 const GRAV: f32 = 2500.0;
 const JUMPACC: f32 = 0.3125 * GRAV;
 
+const GRAP_BOOST: f32 = 30.0 * VX_MAX;
+
+fn sign(num: f32) -> f32 {
+    // 1.0 if positive, -1.0 if negative
+    ((num > 0.0) as i32 - (num < 0.0) as i32) as f32
+}
+
 pub trait Updatable {
     fn next_state(&self, dt: f32, state: &Level) -> Self;
 }
@@ -58,6 +65,32 @@ impl Rect {
         self.top_left.y > other.top_left.y - other.height
             && self.top_left.y - self.height < other.top_left.y
     }
+
+    fn nudge_out(&self, guess: &Rect, other: &Rect) -> Rect {
+        let mut nudged_box = guess.clone();
+
+        if self.y_overlaps(other) {
+            // Old y overlapped, x must be changed
+            if self.top_left.x < other.top_left.x {
+                // If old x was left, snap nuged box left
+                nudged_box.top_left.x = other.top_left.x - nudged_box.width;
+            } else {
+                // Right case
+                nudged_box.top_left.x = other.top_left.x + other.width;
+            }
+        } else if self.x_overlaps(other) {
+            // If old x overlapped, y must be changed
+            if self.top_left.y > other.top_left.y {
+                // If old y was above, snap the nudged box to above
+                nudged_box.top_left.y = other.top_left.y + nudged_box.height;
+            } else {
+                // Below case
+                nudged_box.top_left.y = other.top_left.y - other.height;
+            }
+        }
+
+        nudged_box
+    }
 }
 
 #[derive(Debug)]
@@ -85,6 +118,7 @@ struct Grapple_Hook {
     bounding_box: Rect,
     velocity_x: f32,
     velocity_y: f32,
+    stuck: bool,
 }
 
 impl Grapple_Hook {
@@ -93,6 +127,35 @@ impl Grapple_Hook {
             bounding_box: b,
             velocity_x: 0.0,
             velocity_y: 0.0,
+            stuck: false,
+        }
+    }
+}
+
+impl Updatable for Grapple_Hook {
+    fn next_state(&self, dt: f32, state: &Level) -> Grapple_Hook {
+        if self.stuck {
+            return *self;
+        }
+
+        let x0 = self.bounding_box.top_left.x + self.velocity_x * dt;
+        let y0 = self.bounding_box.top_left.y + self.velocity_y * dt;
+
+        let mut guess = Rect {
+            top_left: Point { x: x0, y: y0 },
+            ..self.bounding_box
+        };
+
+        for platform in &state.platforms {
+            if guess.is_colliding(&platform.bounding_box) {
+                guess = self.bounding_box.nudge_out(&guess, &platform.bounding_box);
+            }
+        }
+
+        Grapple_Hook {
+            bounding_box: guess,
+            stuck: !(x0 == guess.top_left.x && y0 == guess.top_left.y),
+            ..*self
         }
     }
 }
@@ -153,28 +216,9 @@ impl Player {
 
         for platform in &state.platforms {
             if nudged_box.is_colliding(&platform.bounding_box) && !platform.lethal {
-                if self.bounding_box.y_overlaps(&platform.bounding_box) {
-                    // Old y overlapped, x must be changed
-                    if self.bounding_box.top_left.x < platform.bounding_box.top_left.x {
-                        // If old x was left, snap nuged box left
-                        nudged_box.top_left.x = platform.bounding_box.top_left.x - nudged_box.width;
-                    } else {
-                        // Right case
-                        nudged_box.top_left.x =
-                            platform.bounding_box.top_left.x + platform.bounding_box.width;
-                    }
-                } else if self.bounding_box.x_overlaps(&platform.bounding_box) {
-                    // If old x overlapped, y must be changed
-                    if self.bounding_box.top_left.y > platform.bounding_box.top_left.y {
-                        // If old y was above, snap the nudged box to above
-                        nudged_box.top_left.y =
-                            platform.bounding_box.top_left.y + nudged_box.height;
-                    } else {
-                        // Below case
-                        nudged_box.top_left.y =
-                            platform.bounding_box.top_left.y - platform.bounding_box.height;
-                    }
-                }
+                nudged_box = self
+                    .bounding_box
+                    .nudge_out(&nudged_box, &platform.bounding_box);
             }
         }
         for platform in &state.platforms {
@@ -202,6 +246,8 @@ impl Player {
 
 impl Updatable for Player {
     fn next_state(&self, dt: f32, state: &Level) -> Player {
+        // dt *= 0.5;
+
         let mut dvx = 0.0;
         let mut dvy = 0.0;
         let mut new_coyote_time = self.coyote_time;
@@ -220,7 +266,7 @@ impl Updatable for Player {
         let mut new_deaths = self.deaths;
 
         let mut new_velocity_x = self.velocity_x;
-        let mut new_velocity_y = self.velocity_y - GRAV * dt;
+        let mut new_velocity_y = self.velocity_y;
 
         if self.input.right && self.velocity_x <= VX_MAX {
             dvx += ACCX;
@@ -233,16 +279,40 @@ impl Updatable for Player {
                 dvx = 0.0;
             }
         } else if self.input.right == self.input.left {
-            let sign = ((self.velocity_x > 0.0) as i32 - (self.velocity_x < 0.0) as i32) as f32; // sign is positive if velocity_x is positive and vice versa
+            let sign = sign(self.velocity_x); // sign is positive if velocity_x is positive and vice versa
             dvx += ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
         }
 
-        new_velocity_x += dvx * dt;
+        if self.hook.stuck {
+            let dx = self.hook.bounding_box.top_left.x - self.bounding_box.top_left.x;
+            let dy = self.hook.bounding_box.top_left.y - self.bounding_box.top_left.y;
+            let dd = (dx * dx + dy * dy).sqrt();
 
-        if self.input.up && new_coyote_time < 0.1 {
-            new_is_grounded = false;
-            new_coyote_time += 10.0; // Out of range; Effectively a jump counter.
-            new_velocity_y = JUMPACC;
+            dvx += GRAP_BOOST * dx / dd;
+            dvy += GRAP_BOOST * dy / dd;
+        }
+
+        new_velocity_x += dvx * dt;
+        new_velocity_y += dvy * dt;
+
+        if self.input.up {
+            if new_coyote_time < 0.1 || self.hook.stuck {
+                new_is_grounded = false;
+                new_coyote_time += 4.0; 
+                new_velocity_y = JUMPACC;
+            }
+        }
+
+        if self.input.x && !new_is_grappling && (self.input.up || self.input.down || self.input.left || self.input.right ){
+            new_is_grappling = true;
+            new_hook.velocity_x =
+                5.0 * VX_MAX * (self.input.right as i32 - self.input.left as i32) as f32;
+            new_hook.velocity_y =
+                5.0 * VX_MAX * (self.input.up as i32 - self.input.down as i32) as f32;
+        }
+
+        if new_is_grappling {
+            new_hook = new_hook.next_state(dt, state);
         }
 
         if new_velocity_x.abs() < ACCX * dt {
@@ -268,6 +338,19 @@ impl Updatable for Player {
 
         (new_box, new_deaths) = self.evaluate_collisions(&new_box, state);
         new_spawnpoint = self.evaluate_checkpoints(&new_box, state);
+
+        if (self.input.up && new_coyote_time - self.coyote_time > 3.9) || new_deaths != self.deaths
+        {
+            new_is_grappling = false;
+        }
+        if !new_is_grappling {
+            new_hook.bounding_box.top_left.x = new_box.top_left.x + new_box.width * 0.25;
+            new_hook.bounding_box.top_left.y = new_box.top_left.y - new_box.width * 0.25;
+            new_hook.velocity_x = 0.0;
+            new_hook.velocity_y = 0.0;
+
+            new_hook.stuck = false;
+        }
 
         let ground_test = Rect {
             top_left: Point::new(
@@ -378,7 +461,7 @@ impl Checkpoint {
         let level = level.as_bytes();
         let mut retval: Vec<Checkpoint> = Vec::new();
 
-        let plat_symbols = vec![0x63]; // c
+        let plat_symbols = vec![0x63]; // "c"
         let unit = PLAYER_DIMENSION / 2.0;
 
         let mut left_offset = 0;
@@ -424,7 +507,8 @@ impl Level {
         );
         let mc = Player::new(PLAYER_DIMENSION, 100.0, 100.0);
 
-        let file = "test.txt";
+        let args = env::args().collect::<Vec<_>>();
+        let file: &str = args.get(1).expect("test.txt");
         let l = Level {
             player: mc,
             platforms: Platform::read_platforms(file),
@@ -447,7 +531,7 @@ impl event::EventHandler for Level {
     }
 
     fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        println!("{:#?}", self.player);
+        // println!("{:#?}", self.player);
 
         let mut canvas =
             graphics::Canvas::from_frame(ctx, graphics::Color::from([0.4, 0.3, 0.3, 1.0]));
@@ -566,6 +650,22 @@ impl event::EventHandler for Level {
             Some(KeyCode::Left) => self.player.input.left = true,
             Some(KeyCode::Right) => self.player.input.right = true,
             Some(KeyCode::X) => self.player.input.x = true,
+            Some(KeyCode::R) => {
+                self.player.deaths += 1;
+                println!("Deaths: {}", self.player.deaths);
+                self.player.bounding_box.top_left = self.player.spawnpoint;
+                self.player.velocity_x = 0.0;
+                self.player.velocity_y = 0.0;
+                self.player.hook = Grapple_Hook::new(Rect {
+                    top_left: Point::new(
+                        self.player.bounding_box.top_left.x
+                            + self.player.hook.bounding_box.width / 2.0,
+                        self.player.bounding_box.top_left.y
+                            - self.player.hook.bounding_box.width / 2.0,
+                    ),
+                    ..self.player.hook.bounding_box
+                })
+            }
             _ => {} // Ignore other key presses
         }
         Ok(())
@@ -585,6 +685,7 @@ impl event::EventHandler for Level {
 }
 
 fn main() -> GameResult {
+    // File stuff basically copied from the ggez docs
     let resource_dir = if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let mut path = path::PathBuf::from(manifest_dir);
         path.push("resources");

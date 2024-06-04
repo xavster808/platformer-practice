@@ -1,12 +1,62 @@
-========================================
-          =
-          =
-          =x  x
-          =   x 
-          =   x
-          =   x
-              x
-              x
-              x
-              =
-              
+==========xxxxxx=========xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx==========================================
+==========      =========              =============                xxxxxxxxxxx=                                            
+===                 =====                                                xxxxxx=              c                                         
+===                 =====                c                                  xxx=                                                
+==                  =====                                                     x=                                                
+==                    ===                                                      =                                           
+==                                                               x==============                                                
+==                                                                             =                                                
+==                                                                             =                                                
+=                                      =                                       x                                                
+=                                      ==============x                         x                                                
+=                                      ==                                      x                                                
+=                                      ==                                      x                                                
+=                                      =x                                     ==                                                
+=                                     ==x                          x============                                                
+=                                     ==x                                      =                                                
+=                                     ==x                                      =                                                
+=                                    =====                                     x                                                
+==                                   ==============x                           x                                                
+==                                   ===xx                                     x                                                
+==                                   ===x                                      x                                                
+==                                   ===x                                     xx                                                
+==                                   ===x                            x==========                                                
+==        =                          ====                                   ====                                                       
+==      = =                 ====    =====                                     ==                                            
+====    = =               =======  ======                                      =                                            
+=============       =====================                                      =                                            
+=========================================    xxxxxxxxxx                        =                                            
+============================================xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx=   =                                            
+============================================================================   =                                            
+                                        ====================================   ================  ========================                                            
+                                        ========xxxxxxxxxxxxxxxxxxxx=======    ==xxxxxxxxxxxxxx  xxxxxxxxxxxxxxxxxxxxxx==                                            
+                                        =xxxxxxxxxxx              xx======     ==xxxxxxx  xxxxx  xxxxxxxxxxxxxxxxxxxxxx==                                            
+                                        =xxxxxxx                    ======     ==xxxxxx     xxx   xxx      xxx       xx==                                            
+                                        =xxxx                                  ==xxxxxx   ====   xx =====    ==    ======                  
+                                        =xxx                          c        ==xxx==xx                              ===           
+                                        =xx                                    ==xx  ====                              ==        
+                                        =xx                                    ==xx                                    ==    
+                                        =xx                                    ==x                      ==     ==xxx  x==                
+                                        =xx                                    ==x                      =xxxxxx==      ==          
+                                        =x                                     ==x          x         xxxx     ==      ==     
+                                        =x                xxxxx              ====x        xxxx      xxx                ==     
+                                        =x             xxxxxxxxxxx         ===x==x     xxxxxxxx    xx                  ==    
+                                        =x            xxxxxxxxxxxxxxxxxx====xxx==x      xxxxxxx   xx                   ==     
+                                        =x           xxxxxxxx      xxxxxxxxxxxx==x        xxxxx   x                    ==     
+                                        =x            xxxx                xxxxx==x          xxx  xx                    ==    
+                                        =x                                   xx==x          xxx  xx       xxx         xx=                   
+                                        =x                                     ==xx         xxx   x        xxx       xxx=                
+                                        =x                                    ===xxxx       xxx   x         xxxx     xxx=               
+                                        =x                                   ====xxxxx      xxx   x          xxxxx    xx=             
+                                        =x                               ========x          xxx                xxxxx  xx=            
+                                        =x                                    ===           xxx                    xxxxx=         
+                                        =xx                                   ===          xxxx                         =     
+                                        =xx                                   ===          xxxx                     =======     
+                                        =xxx                                   ====       xxxx                                  
+                                        =xxxx         xx                                 xxxxx                            c     
+                                        =xxxxxx      xxxxx                        c      xxxx                                    
+                                        =xxxxxxxxxxxxxxxxxxxxx                         xxxxxx                =                                
+                                        =xxxxxxxxxxxxxxxxxxxxxxxxxxxxx         ==   xxxxxxxx===          ======                                                   
+========================================================================================================================
+
+|                                      ||                                      ||                                      ||                                      ||                                      ||                                      ||                                      ||                                      ||                                      ||                                      ||                                      ||                                      |
