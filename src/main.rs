@@ -246,7 +246,7 @@ impl Player {
 
 impl Updatable for Player {
     fn next_state(&self, dt: f32, state: &Level) -> Player {
-        // dt *= 0.5;
+        //dt *= 0.5;
 
         let mut dvx = 0.0;
         let mut dvy = 0.0;
@@ -496,6 +496,7 @@ struct Level {
     platforms: Vec<Platform>,
     checkpoints: Vec<Checkpoint>,
 
+    background: graphics::Image,
     last_update: Instant,
 }
 
@@ -513,6 +514,8 @@ impl Level {
             player: mc,
             platforms: Platform::read_platforms(file),
             checkpoints: Checkpoint::read_checkpoints(file),
+
+            background: graphics::Image::from_path(ctx, "/placeholder3.png")?, //Hardcoded :(
             last_update: Instant::now(),
         };
         Ok(l)
@@ -534,7 +537,10 @@ impl event::EventHandler for Level {
         // println!("{:#?}", self.player);
 
         let mut canvas =
-            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.4, 0.3, 0.3, 1.0]));
+            graphics::Canvas::from_frame(ctx, graphics::Color::from([0.161, 0.0, 0.0, 1.0]));
+        
+        
+        canvas.draw(&self.background, graphics::DrawParam::default());
 
         let x_offset = if self.player.bounding_box.top_left.x >= 0.0 {
             (self.player.bounding_box.top_left.x as i32 / 800) as f32 * 800.0
@@ -568,7 +574,7 @@ impl event::EventHandler for Level {
                 self.player.hook.bounding_box.width,
                 self.player.hook.bounding_box.height,
             ),
-            Color::new(0.0, 0.0, 0.0, 0.7),
+            Color::new(1.0, 1.0, 1.0, 0.7),
         )?;
 
         canvas.draw(
@@ -598,9 +604,9 @@ impl event::EventHandler for Level {
                     platform.bounding_box.height,
                 ),
                 if platform.lethal {
-                    Color::RED
+                    Color::new(1.0, 0.208, 0.0, 1.0)
                 } else {
-                    Color::new(0.2, 0.2, 0.2, 1.0)
+                    Color::new(0.38, 0.039, 0.114, 1.0) // 0.2, 0.2, 0.2, 1.0)
                 },
             )?;
             canvas.draw(
