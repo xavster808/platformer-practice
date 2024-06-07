@@ -1,14 +1,16 @@
-use ggez::{
+use ggez::{ // Docs for these at docs.rs/ggez, but I also learned from doc.rust-lang.org
     error::{GameError, GameResult},
     event,
     glam::*,
     graphics::{self, Color},
     input::keyboard::{KeyCode, KeyInput},
+    audio::{self, SoundSource},
     Context,
 };
 
 use std::time::{Duration, Instant};
 use std::{env, fs, num, path};
+
 
 const PLAYER_DIMENSION: f32 = 40.0;
 
@@ -246,7 +248,7 @@ impl Player {
 
 impl Updatable for Player {
     fn next_state(&self, dt: f32, state: &Level) -> Player {
-        //dt *= 0.5;
+        // dt *= 0.5;
 
         let mut dvx = 0.0;
         let mut dvy = 0.0;
@@ -303,12 +305,13 @@ impl Updatable for Player {
             }
         }
 
-        if self.input.x && !new_is_grappling && (self.input.up || self.input.down || self.input.left || self.input.right ){
+        let vg_0 = 5.0 * VX_MAX;
+        if self.input.x && !new_is_grappling && (self.input.up != self.input.down || self.input.left != self.input.right ){
             new_is_grappling = true;
             new_hook.velocity_x =
-                5.0 * VX_MAX * (self.input.right as i32 - self.input.left as i32) as f32;
+                vg_0 * (self.input.right as i32 - self.input.left as i32) as f32;
             new_hook.velocity_y =
-                5.0 * VX_MAX * (self.input.up as i32 - self.input.down as i32) as f32;
+                vg_0 * (self.input.up as i32 - self.input.down as i32) as f32;
         }
 
         if new_is_grappling {
@@ -498,6 +501,8 @@ struct Level {
 
     background: graphics::Image,
     last_update: Instant,
+
+    bgm: audio::Source,
 }
 
 impl Level {
@@ -506,20 +511,51 @@ impl Level {
             "LiberationMono",
             graphics::FontData::from_path(ctx, "/LiberationMono-Regular.ttf")?,
         );
-        let mc = Player::new(PLAYER_DIMENSION, 100.0, 100.0);
-
+        
         let args = env::args().collect::<Vec<_>>();
         let file: &str = args.get(1).expect("test.txt");
-        let l = Level {
+        
+        let level = fs::read_to_string(file).expect("Expected readable file");
+
+        let mut spawn_x = 0;
+        let mut spawn_y = 0;
+        
+        for c in level.chars() {
+            if c == 's' {
+                break;
+            } else if c == '\n' {
+                spawn_y += 1;
+                spawn_x = -1;
+            }
+            spawn_x += 1;
+            // println!("{}, {}", spawn_x, spawn_y);
+        }
+
+        let mc = Player::new(PLAYER_DIMENSION, spawn_x as f32 * PLAYER_DIMENSION / 2.0, spawn_y as f32 * PLAYER_DIMENSION / 2.0);
+        // println!("{}, {}", spawn_x, spawn_y);
+        let mut wind = audio::Source::new(ctx, "/wind.ogg")?;
+        wind.set_repeat(true);
+
+        let mut l = Level {
             player: mc,
             platforms: Platform::read_platforms(file),
             checkpoints: Checkpoint::read_checkpoints(file),
 
             background: graphics::Image::from_path(ctx, "/placeholder3.png")?, //Hardcoded :(
             last_update: Instant::now(),
+
+            bgm: wind,
         };
+
+        l.play_fadein(ctx);
         Ok(l)
     }
+
+    fn play_fadein(&mut self, ctx: &mut Context) {
+        let _ = self.bgm.set_fade_in(Duration::from_millis(1000));
+        self.bgm.play_detached(ctx).unwrap();
+    }
+    
 }
 
 impl event::EventHandler for Level {
