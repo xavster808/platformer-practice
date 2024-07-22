@@ -8,8 +8,10 @@ use ggez::{ // Docs for these at docs.rs/ggez, but I also learned from doc.rust-
     Context,
 };
 
-use std::time::{Duration, Instant};
+use std::{hash::Hash, time::{Duration, Instant}};
 use std::{env, fs, num, path};
+
+use std::collections::HashSet;
 
 
 const PLAYER_DIMENSION: f32 = 40.0;
@@ -205,29 +207,22 @@ impl Player {
 
     // precondition: self's bounding_box must be valid.
     fn evaluate_collisions(&self, guess_box: &Rect, state: &Level) -> (Rect, u32) {
-        let mut nudged_box = Rect {
-            top_left: Point {
-                ..guess_box.top_left
-            },
-            ..*guess_box
-        };
+        let mut nudged_box = *guess_box;
         let mut new_deaths = self.deaths;
 
-        for platform in &state.platforms {
-            if nudged_box.is_colliding(&platform.bounding_box) && !platform.lethal {
-                nudged_box = self
-                    .bounding_box
-                    .nudge_out(&nudged_box, &platform.bounding_box);
+        for platform in state.get_nearby_platforms(&nudged_box) {
+            if nudged_box.is_colliding(&platform.bounding_box) {
+                if platform.lethal {
+                    nudged_box.top_left = self.spawnpoint;
+                    new_deaths += 1;
+                    println!("Deaths: {}", new_deaths);
+                    break;
+                } else {
+                nudged_box = self.bounding_box.nudge_out(&nudged_box, &platform.bounding_box);
+                }
             }
         }
-        for platform in &state.platforms {
-            if platform.lethal && nudged_box.is_colliding(&platform.bounding_box) {
-                nudged_box.top_left = self.spawnpoint;
-                new_deaths += 1;
-                println!("Deaths: {}", new_deaths);
-                break;
-            }
-        }
+
         (nudged_box, new_deaths)
     }
 
@@ -399,6 +394,7 @@ impl Updatable for Player {
     }
 }
 
+#[derive(Clone)]
 struct Platform {
     bounding_box: Rect,
 
@@ -497,6 +493,9 @@ struct Level {
     platforms: Vec<Platform>,
     checkpoints: Vec<Checkpoint>,
 
+    spacial_grid: Vec<Vec<HashSet<usize>>>,
+    grid_cell_size: f32,
+
     background: graphics::Image,
     last_update: Instant,
 
@@ -530,7 +529,12 @@ impl Level {
         }
 
         let mc = Player::new(PLAYER_DIMENSION, spawn_x as f32 * PLAYER_DIMENSION / 2.0, spawn_y as f32 * PLAYER_DIMENSION / 2.0);
-        // println!("{}, {}", spawn_x, spawn_y);
+
+        let grid_cell_size = PLAYER_DIMENSION * 2.0;
+        let grid_width = (80000.0 / grid_cell_size).ceil() as usize;
+        let grid_height = (60000.0 / grid_cell_size).ceil() as usize;
+        let spacial_grid = vec![vec![HashSet::new(); grid_width]; grid_height];
+
         let mut wind = audio::Source::new(ctx, "/wind.ogg")?;
         wind.set_repeat(true);
 
@@ -539,14 +543,56 @@ impl Level {
             platforms: Platform::read_platforms(file),
             checkpoints: Checkpoint::read_checkpoints(file),
 
+            spacial_grid: spacial_grid,
+            grid_cell_size: grid_cell_size,
+
             background: graphics::Image::from_path(ctx, "/placeholder3.png")?, //Hardcoded :(
             last_update: Instant::now(),
 
             bgm: wind,
         };
 
+        let list = l.platforms.clone();
+        for(index, platform) in list.iter().enumerate() {
+            l.add_to_spacial_grid(platform, index);
+        }
+
         l.play_fadein(ctx);
         Ok(l)
+    }
+
+    fn add_to_spacial_grid(&mut self, platform: &Platform, index: usize) {
+        let min_x = (platform.bounding_box.top_left.x / self.grid_cell_size).floor() as usize;
+        let max_x = ((platform.bounding_box.top_left.x + platform.bounding_box.width) / self.grid_cell_size).floor() as usize;
+        let min_y = (platform.bounding_box.top_left.y / self.grid_cell_size).floor() as usize;
+        let max_y = ((platform.bounding_box.top_left.y + platform.bounding_box.height) / self.grid_cell_size).floor() as usize;
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                if y < self.spacial_grid.len() && x < self.spacial_grid[y].len() {
+                    self.spacial_grid[y][x].insert(index);
+                }
+            }
+        }
+    }
+
+    fn get_nearby_platforms(&self, rect: &Rect) -> Vec<&Platform> {
+        let min_x = (rect.top_left.x / self.grid_cell_size).floor() as usize;
+        let max_x = ((rect.top_left.x + rect.width) / self.grid_cell_size).floor() as usize;
+        let min_y = (rect.top_left.y / self.grid_cell_size).floor() as usize;
+        let max_y = ((rect.top_left.y + rect.height) / self.grid_cell_size).floor() as usize;
+        
+        let mut nearby_indices = HashSet::new();
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                if y < self.spacial_grid.len() && x < self.spacial_grid[y].len() {
+                    nearby_indices.extend(self.spacial_grid[y][x].clone());
+                }
+            }
+        }
+
+        nearby_indices.iter().map(|&i| &self.platforms[i]).collect()
     }
 
     fn play_fadein(&mut self, ctx: &mut Context) {
