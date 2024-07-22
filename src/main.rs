@@ -16,14 +16,11 @@ const PLAYER_DIMENSION: f32 = 40.0;
 
 const VX_MAX: f32 = 300.0;
 const ACCX: f32 = 15.0 * VX_MAX;
-
 const GRAV: f32 = 2500.0;
 const JUMPACC: f32 = 0.3125 * GRAV;
-
 const GRAP_BOOST: f32 = 30.0 * VX_MAX;
 
 fn sign(num: f32) -> f32 {
-    // 1.0 if positive, -1.0 if negative
     ((num > 0.0) as i32 - (num < 0.0) as i32) as f32
 }
 
@@ -254,7 +251,7 @@ impl Updatable for Player {
         let mut dvy = 0.0;
         let mut new_coyote_time = self.coyote_time;
         if !self.is_grounded {
-            dvy -= GRAV;
+            dvy -= GRAV * dt;
             new_coyote_time += dt;
         } else {
             new_coyote_time = 0.0;
@@ -271,18 +268,21 @@ impl Updatable for Player {
         let mut new_velocity_y = self.velocity_y;
 
         if self.input.right && self.velocity_x <= VX_MAX {
-            dvx += ACCX;
-            if new_velocity_x + dvx * dt > VX_MAX {
-                dvx = 0.0;
+            dvx += ACCX * dt;
+            if new_velocity_x + dvx > VX_MAX {
+                dvx = VX_MAX - new_velocity_x;
             }
-        } else if self.input.left && self.velocity_x >= 0.0 - VX_MAX {
-            dvx -= ACCX;
-            if new_velocity_x + dvx * dt < 0.0 - VX_MAX {
-                dvx = 0.0;
+        } else if self.input.left && self.velocity_x >= -VX_MAX {
+            dvx -= ACCX * dt;
+            if new_velocity_x + dvx < -VX_MAX {
+                dvx = -VX_MAX - new_velocity_x;
             }
         } else if self.input.right == self.input.left {
-            let sign = sign(self.velocity_x); // sign is positive if velocity_x is positive and vice versa
-            dvx += ACCX * sign * -1.0; // This block attracts the player's velocity_x to 0 if idle
+            let sign = sign(self.velocity_x);
+            dvx -= sign * ACCX * dt; // This block attracts the player's velocity_x to 0 if idle
+            if sign * (new_velocity_x + dvx) < 0.0 { // If one of these attractions crosses 0, set new velocity to be 0.
+                dvx = -new_velocity_x;
+            }
         }
 
         if self.hook.stuck {
@@ -290,45 +290,43 @@ impl Updatable for Player {
             let dy = self.hook.bounding_box.top_left.y - self.bounding_box.top_left.y;
             let dd = (dx * dx + dy * dy).sqrt();
 
-            dvx += GRAP_BOOST * dx / dd;
-            dvy += GRAP_BOOST * dy / dd;
+            dvx += GRAP_BOOST * dx / dd * dt;
+            dvy += GRAP_BOOST * dy / dd * dt;
         }
 
-        new_velocity_x += dvx * dt;
-        new_velocity_y += dvy * dt;
+        new_velocity_x += dvx;
+        new_velocity_y += dvy;
 
         if self.input.up {
             if new_coyote_time < 0.1 || self.hook.stuck {
                 new_is_grounded = false;
-                new_coyote_time += 4.0; 
+                new_coyote_time += 4.0; // Magic number :(
                 new_velocity_y = JUMPACC;
             }
         }
 
         let vg_0 = 5.0 * VX_MAX;
-        if self.input.x && !new_is_grappling && (self.input.up != self.input.down || self.input.left != self.input.right ){
+        if self.input.x && !new_is_grappling && (self.input.up != self.input.down || self.input.left != self.input.right ) {
             new_is_grappling = true;
-            new_hook.velocity_x =
-                vg_0 * (self.input.right as i32 - self.input.left as i32) as f32;
-            new_hook.velocity_y =
-                vg_0 * (self.input.up as i32 - self.input.down as i32) as f32;
+            new_hook.velocity_x = vg_0 * (self.input.right as i32 - self.input.left as i32) as f32;
+            new_hook.velocity_y = vg_0 * (self.input.up as i32 - self.input.down as i32) as f32;
         }
 
         if new_is_grappling {
             new_hook = new_hook.next_state(dt, state);
         }
 
-        if new_velocity_x.abs() < ACCX * dt {
+        if new_velocity_x.abs() < ACCX * dt { // If close enough to 0, make v 0
             new_velocity_x = 0.0;
-        } else if new_velocity_x.abs() - VX_MAX < ACCX * dt
+        } else if new_velocity_x.abs() - VX_MAX < ACCX * dt // If new velocity is greater than vx max by more than an acceleration step, 
             && (self.input.left && new_velocity_x < 0.0 || self.input.right && new_velocity_x > 0.0)
         {
             new_velocity_x =
-                VX_MAX * ((new_velocity_x > 0.0) as i32 - (new_velocity_x < 0.0) as i32) as f32;
+                VX_MAX * sign(new_velocity_x);
         }
 
-        if new_velocity_y < -1.0 * JUMPACC {
-            new_velocity_y = -1.0 * JUMPACC;
+        if new_velocity_y < -JUMPACC { // Effective terminal velocity
+            new_velocity_y = -JUMPACC;
         }
 
         let new_pos_x = self.bounding_box.top_left.x + new_velocity_x * dt;
@@ -346,7 +344,7 @@ impl Updatable for Player {
         {
             new_is_grappling = false;
         }
-        if !new_is_grappling {
+        if !new_is_grappling { // Center the grappling hook
             new_hook.bounding_box.top_left.x = new_box.top_left.x + new_box.width * 0.25;
             new_hook.bounding_box.top_left.y = new_box.top_left.y - new_box.width * 0.25;
             new_hook.velocity_x = 0.0;
@@ -564,7 +562,8 @@ impl event::EventHandler for Level {
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
 
-        self.player = self.player.next_state(dt, &self);
+        let capped_dt = dt.min(1.0 / 30.0); // dt is no more than 1/30 of a second
+        self.player = self.player.next_state(capped_dt, &self);
 
         Ok(())
     }
@@ -706,7 +705,8 @@ impl event::EventHandler for Level {
                             - self.player.hook.bounding_box.width / 2.0,
                     ),
                     ..self.player.hook.bounding_box
-                })
+                });
+                self.player.is_grappling = false;
             }
             _ => {} // Ignore other key presses
         }
